@@ -5961,6 +5961,15 @@ static void draw_(CmdRec *r, bool indexed) {
                                st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height;
         bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad;
         if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1)) reads_scene = true;
+        // [XCDE] V9: a full-target pass into the window that samples ANY scene-scaled texture is a composite of the scene
+        // even when none of its textures has exactly the window texture's size (post effects that read a smaller or
+        // differently sized copy of the scene). Before, such a pass was shrunk into the centred 16:9 box: black bars while
+        // the effect ran (e.g. while the camera moves).
+        bool v9_relaxed = false;
+        if (fullscreen_quad && !reads_scene && pr->fi->ntex > 1) {
+            for (int i = 0; i < pr->fi->ntex && i < 64; i++)
+                if (tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1) { reads_scene = true; v9_relaxed = true; break; }
+        }
         static uint64_t wide_frame = ~0ull;
         if (reads_scene) wide_frame = renderer_present_count();
         bool fade_fill = false;
@@ -5971,6 +5980,23 @@ static void draw_(CmdRec *r, bool indexed) {
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
         if (!composite) wide_frame = ~0ull;
+        if ((v9_relaxed || (!composite && fullscreen_quad)) && !getenv("XCDE_NO_WIDE_LOG")) {
+            // [XCDE] V9 diagnostic ("[wide-box]" in last_game.log): one line per distinct fragment shader, at most 80
+            static uint64_t seen_fs[96];
+            static int nseen;
+            uint64_t fsh = st.program->stages[1].code_hash;
+            bool known = false;
+            for (int i = 0; i < nseen; i++) if (seen_fs[i] == fsh) { known = true; break; }
+            if (!known && nseen < 80) {
+                seen_fs[nseen++] = fsh;
+                LOG("[wide-box] %s: fs %016llx ntex %d rt %ux%u vp %.0f %.0f %.0f %.0f pass %.3f %.3f tex0 sc %.3f,%.3f wh %ux%u\n",
+                    v9_relaxed ? "now a composite (fills the window)" : "fullscreen quad kept in the 16:9 box",
+                    (unsigned long long)fsh, (int)pr->fi->ntex, (unsigned)st.rt.color[0]->width, (unsigned)st.rt.color[0]->height,
+                    (double)st.viewport[0][0], (double)st.viewport[0][1], (double)st.viewport[0][2], (double)st.viewport[0][3],
+                    (double)pass_sx, (double)pass_sy, (double)tex_sc[1][0][0], (double)tex_sc[1][0][1],
+                    (unsigned)tex_wh[1][0][0], (unsigned)tex_wh[1][0][1]);
+            }
+        }
         if (!composite) {
             int pw, ph;
             pass_size(&pw, &ph);
