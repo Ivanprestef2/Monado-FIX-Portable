@@ -494,6 +494,8 @@ static void launch() {
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
     std::string log = path("build/last_game.log");
+    // [XCDE] T260: the previous run's log is kept (last_game.prev.log): the report needs the run that failed
+    MoveFileExA(log.c_str(), path("build/last_game.prev.log").c_str(), MOVEFILE_REPLACE_EXISTING);
     SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
     HANDLE h = CreateFileA(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h != INVALID_HANDLE_VALUE) {
@@ -996,13 +998,26 @@ static void scan_mods() {
 }
 
 // [XCDE] "Crear reporte": reports\xcde_report_<date>.zip with what a bug report needs - the last two game logs (this
-// run's and the previous one, build\lasrecomp*.log), xcde.ini and the newest crash report (crash\, text + minidump).
+// run's and the previous one, build\last_game*.log), every other build\*.log, xcde.ini and the newest crash report (crash\, text + minidump).
 // No saves or game files. Zipped by the tar.exe that Windows 10+ ships; the folder opens when it is done.
 static void make_report() {
     std::vector<std::string> files;
-    for (const char *f : {"build/lasrecomp.log", "build/lasrecomp.prev.log", "xcde.ini"})
+    for (const char *f : {"build/last_game.log", "build/last_game.prev.log", "build/last_precompile.log", "build/launcher.log",
+                          "build/lasrecomp.log", "build/lasrecomp.prev.log", "xcde.ini"})
         if (GetFileAttributesA(path(f).c_str()) != INVALID_FILE_ATTRIBUTES) files.push_back(f);
     WIN32_FIND_DATAA fd;
+    {   // [XCDE] T260: any other build\*.log (the report only had xcde.ini: the game log is build\last_game.log, not lasrecomp.log)
+        HANDLE hl = FindFirstFileA(path("build/*.log").c_str(), &fd);
+        if (hl != INVALID_HANDLE_VALUE) {
+            do {
+                std::string rel = std::string("build/") + fd.cFileName;
+                bool dup = false;
+                for (const std::string &f : files) if (_stricmp(f.c_str(), rel.c_str()) == 0) dup = true;
+                if (!dup) files.push_back(rel);
+            } while (FindNextFileA(hl, &fd));
+            FindClose(hl);
+        }
+    }
     std::string newest;
     HANDLE h = FindFirstFileA(path("crash/crash_*.txt").c_str(), &fd);
     if (h != INVALID_HANDLE_VALUE) {

@@ -884,9 +884,20 @@ static atomic_bool aspect_probe, aspect_camera_seen;
 static _Atomic float aspect_for_render;
 
 uint32_t vk_scene_aspect(uint32_t original, uint32_t camera) {
-    if (camera != 0 || !atomic_load(&aspect_probe)) return original;
     float guest_aspect;
     memcpy(&guest_aspect, &original, sizeof guest_aspect);
+    if (atomic_load(&aspect_probe) && (camera != 0 || !(fabsf(guest_aspect - 16.0f / 9.0f) < 0.01f))) {
+        // [XCDE] V9 diagnostic: a camera that reached the hook but is not widened (another camera slot, or an aspect that
+        // is not 16:9) - the scene then stays 16:9 with bars. Logged when it changes, at most 60 times.
+        static uint64_t last_key = ~0ull;
+        static int logged;
+        uint64_t key = ((uint64_t)camera << 32) | (uint32_t)lroundf(guest_aspect * 1000.0f);
+        if (key != last_key && logged++ < 60) {
+            last_key = key;
+            LOG("[aspect-hook] camera slot %u with aspect %.4f is not widened (only slot 0 at 16:9 is)\n", camera, guest_aspect);
+        }
+    }
+    if (camera != 0 || !atomic_load(&aspect_probe)) return original;
     if (!(fabsf(guest_aspect - 16.0f / 9.0f) < 0.01f)) return original;
     extern bool xcde_movie_playing(void);
     if (xcde_movie_playing()) return original;
@@ -1243,7 +1254,29 @@ void backend_present(NvnTexture *t) {
                      ratio <= 32.0 / 9.0 + 0.005 && fabs(ratio / (16.0 / 9.0) - 1.0) > 0.005 &&
                      !getenv("LARECOMP_NO_SCALE");
         bool was_probing = atomic_load(&aspect_probe);
-        bool scene = (probe || was_probing) && atomic_exchange(&aspect_camera_seen, false);
+        // [XCDE] V9: the main camera is not updated on every frame in the character menus, the map and similar screens, so
+        // "camera seen this frame" flipped true/false from one frame to the next. Each flip switched the render targets
+        // between the window's shape and 16:9 (reallocating them: strong flicker, purple frames) and reset the temporal
+        // history. The decision is now held for SCENE_HOLD_NS after the last frame the camera was seen; a movie or a
+        // window that is no longer a widened shape release it at once.
+        static uint64_t scene_seen_ns;
+        const uint64_t SCENE_HOLD_NS = 1500000000ull;
+        extern bool xcde_movie_playing(void);
+        uint64_t tnow = SDL_GetTicksNS();
+        bool cam_seen = atomic_exchange(&aspect_camera_seen, false);
+        if (cam_seen) scene_seen_ns = tnow;
+        bool movie = xcde_movie_playing();
+        if (movie || !(probe || was_probing)) scene_seen_ns = 0;
+        bool scene = (probe || was_probing) && (cam_seen || (scene_seen_ns && tnow - scene_seen_ns < SCENE_HOLD_NS));
+        {   // [XCDE] V9: why the image is (not) widened, logged whenever it changes (last_game.log, "[aspect-state]")
+            static int dbg_key = -1;
+            int key = (probe ? 1 : 0) | (scene ? 2 : 0) | (movie ? 4 : 0) | (g_settings.aspect == ASPECT_UNLOCKED ? 8 : 0);
+            if (key != dbg_key) {
+                dbg_key = key;
+                LOG("[aspect-state] setting=%s probe=%d scene=%d movie=%d window=%.0fx%.0f (probe needs setting=unlocked and 4:3..32:9)\n",
+                    g_settings.aspect == ASPECT_UNLOCKED ? "unlocked" : "original", probe, scene, movie, dw, dh);
+            }
+        }
         float old_aspect = atomic_load(&aspect_for_render);
         OutScale os;
         output_scale(dw, dh, probe && scene, SDL_GetTicksNS() / 1e9, vk_native_gpu_ms(), &os);
@@ -1272,6 +1305,22 @@ void backend_present(NvnTexture *t) {
     if (have) {
         VkCommandBuffer cb = vk_cmd();
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
+        {   // [XCDE] V9: the game image is never stretched to a rectangle of another shape. When the window changes (resize,
+            // another monitor) the targets are re-created one frame later than the placement is decided; for those frames
+            // the image is fitted by its own aspect (bars) instead of filling the window.
+            double ia = b && b->height ? (double)b->width / (double)b->height : 0.0;
+            if (ia > 0.0 && vw > 0.0 && vh > 0.0 && fabs((vw / vh) / ia - 1.0) > 0.02) {
+                static int fit_logged;
+                if (!aspect_changed && fit_logged++ < 20)
+                    LOG("[aspect-fit] presented image %ux%u does not match the placement %.0fx%.0f: fitted with bars\n",
+                        (unsigned)b->width, (unsigned)b->height, vw, vh);
+                double fw = fmin(vw, vh * ia), fh = fw / ia;
+                vx += (vw - fw) * 0.5;
+                vy += (vh - fh) * 0.5;
+                vw = fw;
+                vh = fh;
+            }
+        }
         vk_present_draw(cb, b, (float)vx, (float)vy, (float)vw, (float)vh, pv);
         static long menu_at = -1;
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
