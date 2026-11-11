@@ -92,6 +92,22 @@ static DWORD WINAPI watchdog_main(LPVOID p) {
 }
 
 
+// [XCDE] --game <dir> (RecompLauncher): xcde.ini, save/, cache/ and data/ are found from the folder above build/ (where
+// "Play Monado.bat" starts us), but a launcher may start us from anywhere. Go to that folder, and make the dump folder
+// absolute first so it still points at the same place. Returns false (nothing changed) if either path can't be worked out.
+static bool enter_install_dir(const char *dump_dir, char *abs_dump_dir, size_t size) {
+    char dir[MAX_PATH];
+    if (!plat_exe_path(dir, sizeof dir)) return false;
+    char *build_slash = strrchr(dir, '\\');
+    if (!build_slash) return false;
+    *build_slash = 0;
+    char *install_slash = strrchr(dir, '\\');
+    if (!install_slash) return false;
+    *install_slash = 0;
+    if (!_fullpath(abs_dump_dir, dump_dir, size)) return false;
+    return SetCurrentDirectoryA(dir) != 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 6 && !strcmp(argv[1], "--minidump")) return diag_minidump_helper(argc, argv);  // [XCDE] T028: crash helper process
 #ifdef XCDE_GFX
@@ -102,9 +118,13 @@ int main(int argc, char **argv) {
 #endif
     plat_init();
     setvbuf(stderr, NULL, _IONBF, 0);
-    if (argc < 2) { fprintf(stderr, "usage: xcde_boot <dump dir with exefs/ and romfs/> [seconds]\n"); return 2; }
-    const char *root = argv[1];
-    int seconds = argc > 2 ? atoi(argv[2]) : 20;
+    bool game_opt = argc >= 2 && !strcmp(argv[1], "--game");  // [XCDE] the same dump folder as the positional form, by name
+    int first = game_opt ? 2 : 1;
+    if (argc <= first) { fprintf(stderr, "usage: xcde_boot [--game] <dump dir with exefs/ and romfs/> [seconds]\n"); return 2; }
+    const char *root = argv[first];
+    int seconds = argc > first + 1 ? atoi(argv[first + 1]) : 20;
+    char abs_root[MAX_PATH];
+    if (game_opt && enter_install_dir(root, abs_root, sizeof abs_root)) root = abs_root;
     char exefs[1024], romfs[1024], npdm_path[1024];
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
