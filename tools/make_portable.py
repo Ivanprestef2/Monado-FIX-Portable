@@ -220,6 +220,11 @@ PLAY_BAT = ('@echo off\r\n'
 CLEAN_BAT = '@echo off\r\nrem Monado: borra lo que es de ESTA PC (cache de shaders/pipelines, reportes de crash, logs).\r\nrem Corre esto antes de mover o copiar la carpeta a otra PC. NO toca save\\, xcde.ini ni el juego.\r\ncd /d "%~dp0"\r\necho.\r\necho  Se borrara: cache\\  crash\\  y los .log de build\\\r\necho  (Las partidas en save\\ y los ajustes NO se tocan. En esta PC tendras que volver a pulsar "Precompile shaders".)\r\nchoice /m " Continuar"\r\nif errorlevel 2 exit /b 0\r\nif exist "cache" rmdir /s /q "cache"\r\nif exist "crash" rmdir /s /q "crash"\r\ndel /q "build\\*.log" 2>nul\r\necho.\r\necho  Listo.\r\npause\r\n'
 
 
+def copy_launcher_manifest(out):
+    """recomplauncher.json goes at the top of the folder (and so of the release zip), next to targets/ and build/."""
+    shutil.copy2(os.path.join(REPO, 'recomplauncher.json'), os.path.join(out, 'recomplauncher.json'))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('out', help='destination folder (created if needed)')
@@ -291,6 +296,7 @@ def main():
         copy_tree('save', os.path.join(out, 'save'), 'save/')
     if os.path.isfile('xcde.ini'):
         shutil.copy2('xcde.ini', os.path.join(out, 'xcde.ini'))
+    copy_launcher_manifest(out)
     with open(os.path.join(out, 'Play Monado.bat'), 'w', newline='') as f:
         f.write(PLAY_BAT)
     with open(os.path.join(out, 'Limpiar Monado.bat'), 'w', newline='') as f:

@@ -1,4 +1,5 @@
 """Portable packager: the PE import-table reader and the DLL closure, with synthetic PE files (no game data)."""
+import json
 import os
 import struct
 import sys
@@ -84,6 +85,19 @@ class PeImports(unittest.TestCase):
         found, missing = mp.collect_dlls([exe], [self.d.name], set())
         self.assertEqual(found, {})
         self.assertEqual(missing, ['nowhere-1.dll'])
+
+
+class LauncherManifest(unittest.TestCase):
+    def test_manifest_is_copied_to_the_top_of_the_folder(self):
+        with tempfile.TemporaryDirectory() as out:
+            mp.copy_launcher_manifest(out)
+            self.assertTrue(os.path.isfile(os.path.join(out, 'recomplauncher.json')))
+
+    def test_manifest_starts_the_exe_the_packager_puts_in_build(self):
+        with open(os.path.join(mp.REPO, 'recomplauncher.json'), encoding='utf-8') as f:
+            manifest = json.load(f)
+        self.assertEqual(manifest['format'], 1)
+        self.assertEqual(manifest['start']['program'], ['build/xcde.exe'])
 
 
 if __name__ == '__main__':
