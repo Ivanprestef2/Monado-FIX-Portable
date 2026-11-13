@@ -208,7 +208,36 @@ static void test_surface_ops_fail_cleanly_when_unsupported(void) {
     if (u) { CHECK(u->msl == NULL); CHECK(strstr(u->error, "sust") != NULL); maxwell_free(u); }
 }
 
+// TLDS (2D, level 0: texture_info 2): gpr0 dest, gpr8 x, gpr9 y, texture index; GitHub #29: a fragment's
+// texelFetch of a scaled texture maps its own guest pixel to its own scaled pixel (rscf), not the block centre.
+static uint64_t tlds_2d_lz(int tex) {
+    return 0xd200000000000000ull | (2ull << 53) | ((uint64_t)tex << 36) | (255ull << 28) | (9ull << 20) | (7ull << 16) |
+           (8ull << 8);
+}
+static ShaderInfo *translate_dialect(uint64_t instr, int glsl) {
+    uint8_t blob[0x80 + 8 * 16];
+    memset(blob, 0, sizeof blob);
+    uint64_t *code = (uint64_t *)(blob + 0x80);
+    code[0] = 0; code[1] = instr; code[2] = EXIT_W; code[3] = NOP_W;
+    ShaderKey key; memset(&key, 0, sizeof key);
+    key.glsl = glsl;
+    return maxwell_translate(blob, sizeof blob, STAGE_FRAGMENT, &key);
+}
+static void test_fetch_reads_own_scaled_pixel(void) {
+    ShaderInfo *s = translate_dialect(tlds_2d_lz(3), 1);
+    CHECK(s && s->msl);
+    // (the call site: every GLSL program also carries the rscf() helper's definition)
+    if (s && s->msl) CHECK(strstr(s->msl, "texelFetch(t0, ivec2(rscf(uvec2(r8, r9), rscale[1], rscale[0], gl_FragCoord.xy)), 0)") != NULL);
+    else if (s) printf("  error: %s\n", s->error);
+    if (s) maxwell_free(s);
+    ShaderInfo *m = translate_dialect(tlds_2d_lz(3), 0);  // MSL has no rscf(): it keeps the block-centre mapping
+    CHECK(m && m->msl);
+    if (m && m->msl) { CHECK(strstr(m->msl, "rscf(") == NULL); CHECK(strstr(m->msl, ".read(rsc(") != NULL); }
+    if (m) maxwell_free(m);
+}
+
 int main(void) {
+    test_fetch_reads_own_scaled_pixel();
     test_gather_components();
     test_fp16_pack();
     test_nodep_flag_is_ignored();

@@ -651,11 +651,15 @@ static const char *RSC2(Ctx *c, int slot, const char *fmt, ...) {
     if (c->stage == STAGE_VERTEX) { snprintf(o, 1024, "%s", inner); return o; }
     c->uses_rscale = true;
     // [XCDE] T178 class: a fragment fetching its own guest pixel from a texture scaled like its render target reads its
-    // own scaled pixel, not the centre of its block. Measured at 4K (user meadow save): same sharpness, small deltas -
-    // off by default (XCDE_RSC_PIXEL=1: on).
+    // own scaled pixel, not the centre of its block. With the block centre, every scaled pixel of a block reads the
+    // same depth / normal / mask texel, so edges that pass reads it (character and terrain silhouettes) step at the
+    // game's 720p grid at any higher render resolution, also behind DLSS / FSR (GitHub #29). rscf() changes only
+    // proven own-pixel reads at the same scale; offset reads and unscaled textures keep the old mapping. GLSL only
+    // (the MSL path has no rscf). XCDE_RSC_PIXEL=0: the old block-centre reads.
     static int pix = -1;
-    if (pix < 0) { const char *e = getenv("XCDE_RSC_PIXEL"); pix = e && *e == '1'; }
-    if (pix && c->stage == STAGE_FRAGMENT) snprintf(o, 1024, "rscf(%s, rscale[%d], rscale[0], gl_FragCoord.xy)", inner, slot + 1);
+    if (pix < 0) { const char *e = getenv("XCDE_RSC_PIXEL"); pix = !(e && *e == '0'); }
+    if (pix && c->stage == STAGE_FRAGMENT && c->glsl)
+        snprintf(o, 1024, "rscf(%s, rscale[%d], rscale[0], gl_FragCoord.xy)", inner, slot + 1);
     else snprintf(o, 1024, "rsc(%s, rscale[%d])", inner, slot + 1);
     return o;
 }
