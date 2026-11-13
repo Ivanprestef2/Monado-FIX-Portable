@@ -35,7 +35,10 @@ def main():
     def includes(cpp=False):
         # Zig's libc++ ships its own C headers (string.h, math.h, ...). They have to be found before the SDK's CRT
         # headers, or libc++ mixes two libc header sets and fails to compile; -idirafter still finds SDL3/Vulkan/VMA.
-        sdk_inc = ['-idirafter', str(sdk / 'include')] if cpp else [f'-I{sdk / "include"}']
+        # The SDK headers are third-party: with a newer MSYS2 uCRT64 (XCDE_SDK=/c/msys64/ucrt64) a warning inside
+        # objidl.h becomes an error under -Werror and fails the strict tests. -isystem keeps the project's headers first
+        # and ignores warnings from theirs, so the validation works with the pinned SDK and a system one alike.
+        sdk_inc = ['-idirafter', str(sdk / 'include')] if cpp else ['-isystem', str(sdk / 'include')]
         return [*inc, *sdk_inc]
     failures = []
     skipped = []

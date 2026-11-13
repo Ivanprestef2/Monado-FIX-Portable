@@ -2,8 +2,10 @@
 # Native (C) runtime tests, Windows host: fibers (T032b) and condvar timeout semantics (T031). No game data needed.
 set -e
 cd "$(dirname "$0")/.."
+# -isystem: the MSYS2 headers are third-party. A newer uCRT64 warns inside objidl.h, and the -Werror tests below
+# would fail on it even though the warning is not in our code.
 M=/c/msys64/ucrt64
-Z=".venv/Scripts/python -m ziglang cc -I$M/include"
+Z=".venv/Scripts/python -m ziglang cc -isystem $M/include"
 mkdir -p build/test build/rt
 $Z -c runtime/platform/windows.c -o build/rt/platform_windows.o -O1 -w -Iruntime
 $Z -O1 -w -Iruntime -o build/test/test_fibers.exe tests/native/test_fibers.c runtime/hle/fibers.c
